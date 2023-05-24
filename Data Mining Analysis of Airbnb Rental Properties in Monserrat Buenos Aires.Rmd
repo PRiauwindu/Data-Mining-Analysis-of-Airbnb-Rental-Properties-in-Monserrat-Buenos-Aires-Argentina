@@ -1,0 +1,1272 @@
+---
+title: Data Mining Analysis of Airbnb Rental Properties in Monserrat Buenos Aires
+  Argentina
+knit: (function(input_file, encoding) {
+    out_dir <- 'docs';
+    rmarkdown::render(input_file,
+      encoding=encoding,
+      output_file=file.path(dirname(input_file), out_dir, 'index.html'))})
+author: "Putranegara Riauwindu"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+This GitHub repository contains data mining analysis on Airbnb rental properties in Monserrat, Buenos Aires, Argentina. The analysis focuses on delivering two key outputs to enhance decision-making for property owners and prospective tenants.
+
+**1. Property Descriptive Analytics:**
+
+- Property Overview: Summary statistics, visualizations, mapping, and word cloud analysis.
+- Clustering: Grouping of properties based on similar characteristics.
+
+**2. Property Predictive Analytics:**
+
+- Price Prediction Model: A model to forecast property prices.
+- Amenities Prediction Model: Predicting available amenities for a property.
+- Property Feature Prediction Model: Predictive modeling of property features.
+- Review Score Prediction Model: Forecasting review scores for properties.
+
+These comprehensive data mining analysis results serve as valuable assets for property owners and prospective tenants in Monserrat. By leveraging data-driven insights, users can make informed decisions and enhance their ability to choose suitable rental properties.
+
+Explore this repository to access the analysis code, datasets, and detailed documentation. Make data-driven choices for your property investments or find the perfect Airbnb rental in Monserrat with confidence.
+
+## Importing Relevant Libraries
+
+```{r warning=FALSE, message=FALSE}
+library(tidyverse)
+library(readr)
+library(naniar)
+library(jsonlite)
+library(tidyr)
+library(tidytext)
+library(wordcloud)
+library(leaflet)
+library(scales)
+library(ggbeeswarm)
+library(rpart)  
+library(rpart.plot)  
+library(corrplot)
+library(caret)
+library(e1071)
+library(forecast)
+library(FNN)
+```
+
+## Importing Dataset
+
+```{r message=FALSE}
+master_data <- read_csv("buenos.csv")
+data <- read_csv("buenos.csv")
+```
+
+## Step I: Data Preparation & Exploration
+
+### 1. Missing Values (including Data Cleaning and Manipulation)
+
+Please note that the explanations for what we did and why we did it are available at every steps below with the summary at the end of the steps.
+
+1. Filtering to Monserrat Neighborhood
+
+```{r}
+data <- data %>%
+  filter(neighbourhood_cleansed=='Monserrat')
+```
+
+2. Checking for Missing Value
+
+```{r}
+miss_var_summary(data)
+```
+
+3. Removing variables with missing value >50%: neighbourhood_group_cleansed, bathrooms,calendar_updated, and license
+
+```{r}
+data <- data%>%
+  select(-neighbourhood_group_cleansed, -bathrooms, -calendar_updated, -license)
+```
+
+4. Checking for other variables that might not be useful for this particular analysis
+
+```{r}
+head(data)
+```
+- Removing following variables from dataset:
+
+listing_url, scrape_id, last_scraped, source, description, neighborhood_overview, picture_url, host_id, host_url, host_name, host_since, host_location, host_about, host_response_time, host_response_rate, host_acceptance_rate, host_is_superhost, host_thumbnail_url, host_picture_url, host_neighborhood, host_listings_count, host_total_listings_count, host_verifications, host_has_profile_pic, host_identify_verified, calendar_last_scraped, first_review, and last_review.
+
+- Combining descriptive variable and the URL columns into its own dataframe that could later be LEFT JOIN using id column.
+
+- Combining host information into its own dataframe that could later be LEFT JOIN using id column.
+
+```{r}
+# Removing non-essential variable from main dataset
+data <- data %>%
+  select(- listing_url, - scrape_id, - last_scraped, - source, - description, - neighborhood_overview, - picture_url, - host_id, - host_url, - host_name, - host_since, - host_location, - host_about, - host_response_time, - host_response_rate, - host_acceptance_rate, - host_is_superhost, - host_thumbnail_url, - host_picture_url, -host_neighbourhood, - host_listings_count, - host_total_listings_count, - host_verifications, - host_has_profile_pic, - host_identity_verified, - calendar_last_scraped, -calculated_host_listings_count, -calculated_host_listings_count_entire_homes, -calculated_host_listings_count_private_rooms, -calculated_host_listings_count_shared_rooms, -first_review, -last_review)
+
+# Creating host related information dataset
+host <- master_data %>%
+  filter(neighbourhood_cleansed=="Monserrat") %>%
+  select(id, host_id, host_url, host_name, host_since, host_location, host_about, 
+         host_response_time, host_response_rate, host_acceptance_rate, host_is_superhost, 
+         host_thumbnail_url, host_picture_url, host_neighbourhood, host_listings_count,
+         host_total_listings_count, host_verifications, host_has_profile_pic, host_identity_verified,
+         calculated_host_listings_count, calculated_host_listings_count_entire_homes,
+         calculated_host_listings_count_private_rooms,
+         calculated_host_listings_count_shared_rooms)
+
+# Creating Description information dataset
+desc <- master_data %>%
+  filter(neighbourhood_cleansed=="Monserrat")%>%
+  select(id, description, neighborhood_overview, picture_url, listing_url)
+```
+
+5. Checking for missing value in the main dataset
+
+```{r}
+miss_var_summary(data)
+```
+
+Based on the above information, below inferences and decisions were made
+
+1. neighbourhood: this variable does not give any additional value to the overall analysis as this is a duplicate information from the "neighbourhood_cleansed". This variable will be removed
+
+2. all review scores: the missing observation related to all review scores will be removed review is something that is subjective based on the input of the user thus it would not be a wise decision to impute this as it will introduce bias to the dataset
+
+3. reviews_per_month missing observation will be removed as imputing it might introduce bias to the dataset
+
+4. bedrooms, beds, and bathroom_text missing observation will be removed as it is property specific and imputing the value might give a misleading the associated properly characteristics.
+
+```{r}
+# Removing neighbourhood column
+data <- data %>%
+  select (-neighbourhood)
+
+# Removing missing observations from above-mentioned variables
+data <- subset(data, complete.cases(review_scores_accuracy,
+                                     review_scores_checkin,
+                                     review_scores_cleanliness,
+                                     review_scores_communication,
+                                     review_scores_location,
+                                     review_scores_value,
+                                     review_scores_rating,
+                                     reviews_per_month,
+                                     bedrooms,
+                                     beds,
+                                     bathrooms_text))
+
+```
+
+6. Manipulating bathroom data
+
+```{r}
+# extract the numerical value from the bathrooms_text variable
+data$bathrooms <- as.numeric(gsub("[^[:digit:]./]", "", data$bathrooms_text))
+
+# create a new variable to indicate whether the bathroom is shared or not
+data$shared_bathroom <- ifelse(grepl("shared", data$bathrooms_text, ignore.case = TRUE), "Yes", "No")
+
+# handle cases where bathrooms_text is "shared bath" or missing
+data$bathrooms[grepl("shared", data$bathrooms_text, ignore.case = TRUE) |
+               is.na(data$bathrooms_text)] <- NA
+
+# handle cases where bathrooms_text is "0 bath" or "0.5 bath"
+data$bathrooms[data$bathrooms == 0] <- 0.5
+data$bathrooms[data$bathrooms == 0.5 & grepl("shared", data$bathrooms_text, ignore.case = TRUE)] <- NA
+
+# handle cases where bathrooms_text is "X shared bath" or "X.X shared bath"
+data$bathrooms[grepl("shared", data$bathrooms_text, ignore.case = TRUE) &
+               !grepl("0\\.5", data$bathrooms_text) &
+               !is.na(data$bathrooms_text)] <- as.numeric(gsub("[^[:digit:]./]", "", data$bathrooms_text[grepl("shared", data$bathrooms_text, ignore.case = TRUE)]))
+
+# replace missing values with the median number of bathrooms
+data$bathrooms[is.na(data$bathrooms)] <- median(data$bathrooms, na.rm = TRUE)
+```
+
+7. Manipulating amenities data
+
+```{r}
+# split the string column into a list column
+data$amenities_list <- lapply(data$amenities, jsonlite::fromJSON)
+
+# specify the maximum length of the list
+max_len <- max(lengths(data$amenities_list))
+
+# pad shorter lists with NA values
+data$amenities_list <- lapply(data$amenities_list, `length<-`, max_len)
+
+# convert the list column to wide format
+data <- unnest_wider(data, col = amenities_list, names_sep = "_")
+
+# converting all amenities columns into categorical
+for (i in 1:10) {
+  col_name <- paste0("amenities_list_", i)
+  data[[col_name]] <- as.factor(data[[col_name]])}
+```
+
+8. Merging the previously splitted dataset into new merged data
+
+```{r}
+merged_data <- left_join(data,host, by='id')
+merged_data <- left_join(merged_data, desc, by='id')
+```
+
+9. Grouping the amenities for simplification
+
+```{r}
+merged_data$Kitchen <- apply(merged_data[, 41:107], 1, function(x) { ifelse(sum(grepl("Kitchen", x)) > 0, 1, 0) })
+merged_data$Wifi <- apply(merged_data[, 41:107], 1, function(x) { ifelse(sum(grepl("Wifi", x)) > 0, 1, 0) })
+merged_data$Air_conditioning <- apply(merged_data[, 41:107], 1, function(x) { ifelse(sum(grepl("Air conditioning", x)) > 0, 1, 0) })
+merged_data$Elevator <- apply(merged_data[, 41:107], 1, function(x) { ifelse(sum(grepl("Elevator", x)) > 0, 1, 0) })
+merged_data$Dishes_and_silverware <- apply(merged_data[, 41:107], 1, function(x) { ifelse(sum(grepl("Dishes and silverware", x)) > 0, 1, 0) })
+merged_data$Washer <- apply(merged_data[, 41:107], 1, function(x) { ifelse(sum(grepl("Washer", x)) > 0, 1, 0) })
+merged_data$Body_soap <- apply(merged_data[, 41:107], 1, function(x) { ifelse(sum(grepl("Body soap", x)) > 0, 1, 0) })
+merged_data$Microwave <- apply(merged_data[, 41:107], 1, function(x) { ifelse(sum(grepl("Microwave", x)) > 0, 1, 0) })
+merged_data$Paid_parking_off_premises <- apply(merged_data[, 41:107], 1, function(x) { ifelse(sum(grepl("Paid parking off premises", x)) > 0, 1, 0) })
+merged_data$TV <- apply(merged_data[, 41:107], 1, function(x) { ifelse(sum(grepl("TV", x)) > 0, 1, 0) })
+```
+
+10. Grouping Availability information for simplification
+
+The availability were binned into two variables
+
+- short term: (availability 30 + availability 60 + availability 90)/3, if the value is more than mean of the short term column, then its 1 otherwise 0
+
+- long term: availability 365. if the value is more the mean of the availability 365 column, then its 1, otherwise its 0
+
+1 means that the property has the availability for that particular short or long term, while 0 is the otherwise.
+
+Another manipulation in this part is that another two new columns were created to aid in the analysis which are:
+
+- years: describing how many years has elapsed since the listing first listed on the AirBnB
+
+- total_amenities; describing how many variants of amenities each listing have.
+
+```{r}
+merged_data <- merged_data %>%
+  mutate(mean_short = (availability_30+availability_60+availability_90)/3) %>%
+  mutate(short_term_availability = ifelse(mean_short<mean(mean_short), 0, 1)) %>%
+  mutate(long_term_availability = ifelse(availability_365 < mean(availability_365), 0,1)) %>%
+  mutate(start_date = as.Date(host_since)) %>%
+  mutate(end_date = as.Date("2023-05-05")) %>%
+  mutate(years = as.numeric(difftime(end_date, start_date)))%>%
+  mutate(years = years/365) %>%
+  mutate(total_amenities = Kitchen+Wifi+Air_conditioning+Elevator+Dishes_and_silverware+Washer
+         +Body_soap+Microwave+Paid_parking_off_premises)
+```
+
+11. Housekeeping on host data, price data, and property/room type data 
+
+```{r}
+# Remove "N/A" value in the host data
+merged_data <- subset(merged_data, host_response_time != "N/A")
+merged_data <- subset(merged_data, host_response_rate != "N/A")
+merged_data <- subset(merged_data, host_acceptance_rate != "N/A")
+
+# Converting host response rate and acceptance rate into numeric
+merged_data$host_response_rate <- as.numeric(gsub("%", "", merged_data$host_response_rate))/100
+merged_data$host_acceptance_rate <- as.numeric(gsub("%", "", merged_data$host_acceptance_rate))/100
+
+# Preparing price data
+merged_data$price <- gsub("\\$|,", "", merged_data$price)
+merged_data$price <- as.numeric(merged_data$price)
+
+# Converting room and property type data into categorical
+merged_data$property_type <- as.factor(merged_data$property_type)
+merged_data$room_type <- as.factor(merged_data$room_type)
+```
+
+The "N/A" value in the host_response_time and host_response_rate were decided to be removed due to its low proportion in the dataset. Imputing it might introduce bias.
+
+12. Converting variables into categorical
+
+```{r}
+merged_data$room_type <- as.factor(merged_data$room_type)
+merged_data$instant_bookable <- as.factor(merged_data$instant_bookable)
+merged_data$shared_bathroom <- as.factor(merged_data$shared_bathroom)
+merged_data$host_response_time <- as.factor(merged_data$host_response_time)
+merged_data$host_is_superhost <- as.factor(merged_data$host_is_superhost)
+merged_data$host_identity_verified <- as.factor(merged_data$host_identity_verified)
+merged_data$Kitchen <- as.factor(merged_data$Kitchen)
+merged_data$Wifi <- as.factor(merged_data$Wifi)
+merged_data$Air_conditioning <- as.factor(merged_data$Air_conditioning)
+merged_data$Elevator <- as.factor(merged_data$Elevator)
+merged_data$Dishes_and_silverware <- as.factor(merged_data$Dishes_and_silverware)
+merged_data$Washer <- as.factor(merged_data$Washer)
+merged_data$Body_soap <- as.factor(merged_data$Body_soap)
+merged_data$Microwave <- as.factor(merged_data$Microwave)
+merged_data$Paid_parking_off_premises <- as.factor(merged_data$Paid_parking_off_premises)
+merged_data$short_term_availability <- as.factor(merged_data$short_term_availability)
+merged_data$long_term_availability <- as.factor(merged_data$long_term_availability)
+```
+
+13. Selecting columns that we want to focus on
+
+```{r}
+data_new <- merged_data %>%
+  select(id, name, latitude, longitude, property_type, room_type, price,
+         accommodates, bedrooms, beds,bathrooms,shared_bathroom, minimum_nights, 
+         maximum_nights, number_of_reviews, review_scores_rating, review_scores_accuracy, 
+         review_scores_cleanliness, review_scores_checkin, 
+         review_scores_communication, review_scores_location, review_scores_value,
+         instant_bookable, Kitchen, Wifi, Air_conditioning, Elevator, Dishes_and_silverware,
+         Washer, Body_soap, Microwave, Paid_parking_off_premises,
+         total_amenities, short_term_availability, 
+         long_term_availability, years, host_id, host_response_time,
+         host_response_rate, host_acceptance_rate, host_is_superhost, host_identity_verified,
+         )
+```
+
+14. Exporting the data into csv format to be shared to the rest of the team member
+
+```{r}
+write.csv(data_new, file = "data_new.csv", row.names = FALSE)
+```
+
+TLDR: 
+
+We removed several variables that we believed will not add much value to the analysis that we are going to focus on. We also removed observations with "N/A" or missing value because we believe that it was not possible to impute the data without introducing significant bias. We also did some "feature engineering" on several variables to simplify the modeling and analysis.
+
+### 2. Summary Statistics
+
+Looking at the Airbnb data for Monserrat Neighborhood, it is interesting to know what are the:
+
+- Price
+- Bedrooms
+- Bathrooms: Private and Shared
+- Accommodates
+- Overall Review Scores
+- Total Amenities
+
+based on each property room type. Below is the summary statistics for each of the variables.
+
+1. Summary Statistics: Price
+
+```{r}
+price_stats <- data_new %>%
+  group_by(room_type) %>%
+  summarise(
+    observation = n(),            
+    mean_price = mean(price, na.rm = TRUE),  
+    sd_price = sd(price, na.rm = TRUE),      
+    median_price = median(price, na.rm = TRUE), 
+    min_price = min(price, na.rm = TRUE),     
+    max_price = max(price, na.rm = TRUE))
+price_stats
+```
+
+2. Summary Statistics: Bathrooms Private
+
+```{r}
+bathrooms_private_stats <- data_new %>%
+  filter(shared_bathroom=="No") %>%
+  group_by(room_type) %>%
+  summarise(
+    observation = n(),            
+    mean_bathrooms = mean(bathrooms, na.rm = TRUE), 
+    sd_bathrooms = sd(bathrooms, na.rm = TRUE),      
+    median_bathrooms = median(bathrooms, na.rm = TRUE), 
+    min_bathrooms = min(bathrooms, na.rm = TRUE), 
+    max_bathrooms = max(bathrooms, na.rm = TRUE))
+bathrooms_private_stats
+```
+
+2. Summary Statistics: Bathrooms Shared
+
+```{r}
+bathrooms_shared_stats <- data_new %>%
+  filter(shared_bathroom=="Yes") %>%
+  group_by(room_type) %>%
+  summarise(
+    observation = n(),            
+    mean_bathrooms = mean(bathrooms, na.rm = TRUE), 
+    sd_bathrooms = sd(bathrooms, na.rm = TRUE),      
+    median_bathrooms = median(bathrooms, na.rm = TRUE), 
+    min_bathrooms = min(bathrooms, na.rm = TRUE), 
+    max_bathrooms = max(bathrooms, na.rm = TRUE))
+bathrooms_shared_stats
+```
+
+3. Summary Statistics: Bedrooms
+
+```{r}
+bedrooms_stats <- data_new %>%
+  group_by(room_type) %>%
+  summarise(
+    observation = n(),            
+    mean_bedrooms = mean(bedrooms, na.rm = TRUE), 
+    sd_bedrooms = sd(bedrooms, na.rm = TRUE),      
+    median_bedrooms = median(bedrooms, na.rm = TRUE), 
+    min_bedrooms = min(bedrooms, na.rm = TRUE), 
+    max_bedrooms = max(bedrooms, na.rm = TRUE))
+bedrooms_stats
+```
+
+4. Summary Statistics: Accommodates
+
+```{r}
+accommodates_stats <- data_new %>%
+  group_by(room_type) %>%
+  summarise(
+    observation = n(),            
+    mean_accommodates = mean(accommodates, na.rm = TRUE), 
+    sd_accommodates = sd(accommodates, na.rm = TRUE),      
+    median_accommodates = median(accommodates, na.rm = TRUE), 
+    min_accommodates = min(accommodates, na.rm = TRUE), 
+    max_accommodates = max(accommodates, na.rm = TRUE))
+accommodates_stats
+```
+
+5. Summary Statistics: Overall Review Scores
+
+```{r}
+review_stats <- data_new %>%
+  group_by(room_type) %>%
+  summarise(
+    observation = n(),            
+    mean_review = mean(review_scores_rating, na.rm = TRUE), 
+    sd_review= sd(review_scores_rating, na.rm = TRUE),      
+    median_review = median(review_scores_rating, na.rm = TRUE), 
+    min_review = min(review_scores_rating, na.rm = TRUE), 
+    max_review = max(review_scores_rating, na.rm = TRUE))
+review_stats
+```
+
+6. Summary Statistics: Total Amenities
+
+```{r}
+amenities_stats <- data_new %>%
+  group_by(room_type) %>%
+  summarise(
+    observation = n(),            
+    mean_amenities = mean(total_amenities, na.rm = TRUE), 
+    sd_amenities= sd(total_amenities, na.rm = TRUE),      
+    median_amenities = median(total_amenities, na.rm = TRUE), 
+    min_amenities = min(total_amenities, na.rm = TRUE), 
+    max_amenities = max(total_amenities, na.rm = TRUE))
+amenities_stats
+```
+
+Summary
+
+Monserrat, a charming location for vacationers, offered an array of Airbnb properties for travelers. Among the options available, entire homes or apartments proved to be the most popular, far outnumbering private rooms and shared spaces. Surprisingly, hotel rooms came out as the most expensive option, while entire homes or apartments ranked a close second.
+
+For those who value their privacy, a property that specifies a private bathroom is essential. Interestingly, all properties with private bathrooms had one bathroom per room type on average, while those with shared bathrooms had two. Private rooms were found to have the highest average number of bedrooms, with around two per room on average. On the other hand, entire homes or apartments offered the highest average number of accommodates, which was typically around three people.
+
+When it came to amenities, hotel rooms triumphed with the highest mean of total amenities, closely followed by entire homes or apartments. Despite the differences in amenities, all room types shared a relatively similar mean review rating, indicating that the quality of the listings was consistent across the board.
+
+With all these options to choose from, Monserrat promises an unforgettable experience for all types of travelers.
+
+### 3. Data Visualization
+
+Looking at the airbnb data for Monserrat Neighborhood, it is interesting to visually see what are the:
+
+- Population
+- Price
+- Overall Review
+- Amenities Count
+- Price Trends on Different Accommodates
+
+based on each property room type. Below is the summary statistics for each of the variables.
+
+1. Room Type Population
+
+```{r, warning=FALSE}
+ggplot(data_new, aes(x = room_type, y = ..count.., fill = room_type)) +
+  geom_bar(alpha = 0.7, width = 0.5) +
+  labs(x = "Room Type", y = "Count", fill = "Room Type") +
+  scale_fill_manual(values = c("#1F77B4", "#FF7F0E", "#2CA02C", "#D62728")) +
+  theme_minimal() +
+  theme(plot.title = element_text(face = "bold", size = 16, hjust = 0.5),
+        legend.position = "bottom",
+        axis.title = element_text(face = "bold", size = 14),
+        axis.text = element_text(size = 12)) +
+  ggtitle("Number of Property Based on Room Type")
+
+```
+
+2. Room Type Price
+
+note: there are two outliers price point for the "entire home/apt" room type (262,857 USD and 216,521 USD). Those two outliers were removed to show a better visualization
+
+```{r}
+# Remove two maximum values of price for entire home/apt
+data_new_clean <- data_new %>%
+  filter(!(room_type == "Entire home/apt" & price %in% tail(sort(price), 2)))
+
+ggplot(data_new_clean, aes(x = room_type, y = price, fill = room_type)) +
+  geom_boxplot(alpha = 0.7, width = 0.5) +
+  labs(x = "Room Type", y = "Price", fill = "Room Type") +
+  scale_fill_manual(values = c("#1F77B4", "#FF7F0E", "#2CA02C", "#D62728")) +
+  scale_y_continuous(labels = dollar_format(prefix = "$")) +
+  theme_minimal() +
+  theme(plot.title = element_text(face = "bold", size = 16, hjust = 0.5),
+        legend.position = "bottom",
+        axis.title = element_text(face = "bold", size = 14),
+        axis.text = element_text(size = 12)) +
+  ggtitle("Price Distribution by Room Type")
+
+```
+
+3. Overall Review Score per Room Type
+
+```{r}
+ggplot(data_new, aes(x = room_type, y = review_scores_rating, fill = room_type)) +
+  geom_violin(scale = "width", alpha = 0.7) +
+  labs(x = "Room Type", y = "Review Scores Rating", fill = "Room Type") +
+  scale_fill_manual(values = c("#1F77B4", "#FF7F0E", "#2CA02C", "#D62728")) +
+  theme_minimal() +
+  theme(plot.title = element_text(face = "bold", size = 16, hjust = 0.5),
+        legend.position = "bottom",
+        axis.title = element_text(face = "bold", size = 14),
+        axis.text = element_text(size = 12)) +
+  ggtitle("Review Scores Rating Distribution by Room Type")
+
+```
+
+4. Distribution of Amenities Number per Room Type
+
+```{r}
+# Calculate the sum of each amenity by room type
+amenities_sum_by_roomtype <- data_new %>%
+  select(room_type, Kitchen, Wifi, Air_conditioning, Elevator, Dishes_and_silverware, Washer, Body_soap, Microwave) %>%
+  mutate(across(Kitchen: Microwave, as.numeric)) %>%
+  group_by(room_type) %>%
+  summarize_all(sum)
+
+# Reshape data to long format for plotting
+amenities_sum_by_roomtype_long <- amenities_sum_by_roomtype %>%
+  pivot_longer(cols = -room_type, names_to = "amenity", values_to = "count") %>%
+  arrange(room_type, desc(count))
+
+# Create stacked bar plot
+ggplot(amenities_sum_by_roomtype_long, aes(x = amenity, y = count, fill = room_type)) +
+  geom_col() +
+  scale_fill_manual(values = c("#F8766D", "#00BA38", "#619CFF", "#DA3B3A")) +
+  labs(x = "Amenities", y = "Number of Listings", fill = "Room Type") +
+  theme_minimal() +
+  theme(plot.title = element_text(face = "bold", size = 16, hjust = 0.5),
+        legend.position = "bottom",
+        axis.title = element_text(face = "bold", size = 14),
+        axis.text = element_text(size = 12),
+        axis.text.x = element_text(angle = 45, hjust = 1)) +
+  ggtitle("Amenities by Room Type")
+
+```
+
+5. Price Trend on Different Accommodates Capacity per Room Type
+
+```{r}
+my_colors <- c("#1F77B4", "#FF7F0E", "#2CA02C", "#D62728")
+
+ggplot(data_new, aes(x = accommodates, y = price, color = room_type)) +
+  geom_point(alpha = 0.7, size = 3) +
+  scale_color_manual(values = my_colors) +
+  scale_y_continuous(labels = dollar_format(prefix = "$")) +
+  labs(x = "Accommodates", y = "Price", color = "Room Type") +
+  theme_minimal() +
+  theme(plot.title = element_text(face = "bold", size = 16, hjust = 0.5),
+        legend.position = "bottom",
+        axis.title = element_text(face = "bold", size = 14),
+        axis.text = element_text(size = 12)) +
+  ggtitle("Scatterplot of Price and Accommodates by Room Type")
+
+```
+Summary
+
+Nestled in the stunning location of Monserrat, vacationers have an array of Airbnb properties to choose from. Dominating the market with around 400 listings, entire homes or apartments were the most popular option, followed by private rooms with around 100 listings. In contrast, the number of listings for hotel and shared rooms was relatively low.
+
+When it comes to price, hotel rooms reign supreme as the most expensive option, followed by entire homes or apartments. Surprisingly, shared rooms were found to be the cheapest option. Entire homes or apartments boasted the broadest range of prices compared to the rest of the property room types, making them an attractive option for budget-conscious travelers.
+
+The review ratings for all room types in Monserrat were relatively consistent, with no significant differences among them. However, entire homes or apartments had the broadest range of review ratings, spanning from 4.7 to 1. This highlights the importance of reading through reviews thoroughly before making a booking.
+
+If amenities are essential, then entire homes or apartments would be the go-to option in Monserrat. They offer the highest number of amenities compared to the other room types. From free Wi-Fi to essential kitchen supplies, these properties cater to the needs of all types of travelers.
+
+Interestingly, the number of accommodates does not seem to affect rental prices for all room types in Monserrat. This opens up an opportunity for larger groups to enjoy a budget-friendly stay without having to worry about spending more for the same property.
+
+All in all, Monserrat is an excellent location for vacationers, with Airbnb properties offering something for everyone.
+
+### 4. Mapping
+
+```{r}
+m <- leaflet() %>% addTiles() %>% addCircles(data = data_new, lng= ~longitude , lat= ~latitude)%>% addProviderTiles(providers$JusticeMap.income)
+m
+```
+
+Description:
+
+The neighborhood Monserrat is adjacent to the natural reservoir and Laguna de los Patos. Besides the nature, Monserrat has notable landmarks, such as the Casa Rosada and Plaza de Mayo, where the first is the presidential palace of Argentina and serves as the executive office of the President and the second is a historic public square that has been the site of many important political events in Argentina's history.
+
+### 5. Word Cloud
+
+```{r}
+# Split neighborhood_overview column into words and create a new dataframe
+words <- master_data %>%
+  select(neighborhood_overview) %>%
+  unnest_tokens(word, neighborhood_overview)
+
+# Create a custom list of stop words
+custom_stopwords <- c(stop_words$word, "de", "la")
+
+# Remove stop words and create a word frequency table
+word_freq <- words %>%
+  anti_join(stop_words, by = "word") %>%
+  anti_join(data.frame(word = custom_stopwords), by = "word") %>%
+  count(word, sort = TRUE)
+# Set the size of the graphics device
+options(repr.plot.width = 8, repr.plot.height = 8)
+
+# Generate a word cloud
+wordcloud(words = word_freq$word, freq = word_freq$n, min.freq = 1,
+          max.words = 200, random.order = FALSE, rot.per = 0.5, 
+          colors = brewer.pal(8, "Dark2"))
+```
+
+The words in the word cloud are all related to the neighborhoods and landmarks in Buenos Aires, and their prominence in the word cloud can provide insights into the most frequent and important words in the neighborhood overview column of the Buenos Aires Airbnb dataset.
+
+"Br" is likely to stand for "Barrio" or "neighborhood" in Spanish, and its prominence in the word cloud suggests that the neighborhood overview column frequently mentions different neighborhoods in Buenos Aires. "San" is an honorific title used in place names, and its appearance in the word cloud suggests that the neighborhood overview column may include references to different streets, districts, or landmarks with this title.
+
+"Telmo" refers to the San Telmo neighborhood in Buenos Aires, which is known for its historic architecture, tango culture, and antique markets. Its appearance in the word cloud suggests that the neighborhood overview column may include descriptions of this neighborhood and its characteristics.
+
+"Buenos" and "Aires" refer to the city of Buenos Aires, which is the capital of Argentina and one of the largest cities in South America. The appearance of these terms in the word cloud suggests that the neighborhood overview column may include descriptions of different neighborhoods and landmarks within the city.
+
+"Mayo" refers to the Plaza de Mayo, which is a public square in the heart of Buenos Aires that is known for its historical and political significance. Its appearance in the word cloud suggests that the neighborhood overview column may include descriptions of this landmark and its role in the city's history.
+
+"Plaza" refers to public squares and plazas, which are common features in many neighborhoods in Buenos Aires. Its appearance in the word cloud suggests that the neighborhood overview column may include descriptions of different plazas and their characteristics.
+
+## Step II: Prediction
+
+The multiple regression model were constructed in the following steps.
+
+1. Defining data
+
+```{r}
+MLR <- data_new
+```
+
+2. Convert the price variable using a log transformation
+
+```{r}
+MLR$price <- log(MLR$price)
+```
+
+3. Checking the uniqueness of the categorical variables. 
+
+By using the length() and unique() functions, we were able to identify the unique values of the categorical variable in the dataset. Based on the results, we have decided to remove several variables, namely id, host_id, name, latitude, and longitude from the dataset used for multiple linear regression (MLR) because of its irrelevancy to the MLR.
+
+Furthermore, the property_type variable is a subtype of the room_type variable, and as such, it will also be removed.
+
+```{r}
+# Looking for number of unique value
+length(unique(MLR$id))
+length(unique(MLR$host_id))
+length(unique(MLR$name))
+length(unique(MLR$latitude))
+length(unique(MLR$longitude))
+length(unique(MLR$property_type))
+length(unique(MLR$room_type))
+length(unique(MLR$host_response_time))
+
+# Removing the id, host_id, name, property_type, latitude, and longitude variable
+MLR_clean <- subset(MLR, select=c(-id, -host_id, -name, -property_type, -latitude, -longitude))
+```
+
+4. Check the numeric variables' correlation. 
+
+According to the results below, there are some variables that have relationship value >= 0.80: review_scores_rating & review_scores_accuracy, review_scores_rating & review_scores_value, and review_scores_accuracy & review_scores_value. Therefore, the review_scores_rating and review_scores_value variable will be removed from the dataset.
+
+```{r}
+library(corrplot)
+
+# Calculating correlation between numeric variables
+Corr <- cor(MLR_clean %>% 
+              select(c(accommodates, bedrooms, beds, 
+                       minimum_nights, maximum_nights,number_of_reviews,
+                       review_scores_rating, review_scores_accuracy, 
+                       review_scores_cleanliness,review_scores_checkin,
+                       review_scores_communication, review_scores_location,
+                       review_scores_value, bathrooms, host_response_rate, 
+                       host_acceptance_rate, years)))
+print(Corr)
+
+# Plotting the correlation
+corrplot(Corr, type = "upper", order = "hclust", 
+         tl.col = "black", tl.srt = 45)
+
+# Removing the review_scores_rating and review_scores_value variable
+MLR_fix <- subset(MLR_clean, select=c(-review_scores_rating, -review_scores_value))
+```
+
+5. Data Partioning. 
+
+Using the `sample()` function, the MLR_fix data frame was randomly assigned to train.df for 60% of the data, and the rest is assigned to the valid.df.
+
+```{r}
+set.seed(62)
+train.index <- sample(c(1:nrow(MLR_fix)), nrow(MLR_fix)*0.6)
+train.df <- MLR_fix[train.index, ]
+valid.df <- MLR_fix[-train.index, ]
+```
+
+6. Creating multiple regression model with all variables in training dataset
+
+```{r}
+MLR_all <- lm(price~ ., data=train.df)
+summary(MLR_all)
+```
+7. Performing stepwise regression.
+
+```{r echo=FALSE, include=FALSE}
+MLR.step <- step(MLR_all, direction = "backward")
+```
+
+8. Assess the accuracy of the model against both the training set and the validation set
+
+```{r}
+# Accuracy against training dataset
+pred_tm <- predict(MLR.step, train.df)
+accuracy(pred_tm, train.df$price)
+# Accuracy againts validation dataset
+pred_vm <- predict(MLR.step, valid.df)
+accuracy(pred_vm, valid.df$price)
+# RMSE gap between training and validation dataset
+RMSE_gap <- (0.5370704-0.3925947)/0.3925947
+print(RMSE_gap)
+# MAE gap between training and validation dataset
+MAE_gap <- (0.3370304-0.3060701)/0.3060701
+print(MAE_gap)
+```
+
+## Step III: Classification
+
+### Classification Part I: K Nearest Neighbors
+
+The KNN predictive model was constructed using these following steps to predict certain rental properties in Monserrat will have Kitchen amenities or not.
+
+1. Picking the third observation of rental property in Monserrat Neighborhood and removing its amenities information for test observation.
+
+```{r}
+rental <- data_new[3, ] %>%
+  select(price, accommodates, bedrooms, beds, bathrooms, minimum_nights,
+         maximum_nights, number_of_reviews, review_scores_rating, review_scores_accuracy,
+         review_scores_cleanliness, review_scores_checkin, review_scores_communication,
+         review_scores_location, review_scores_value, years,
+         host_response_rate, host_acceptance_rate)
+```
+
+2. Building new numeric dataframe for KNN model building. The numeric predictors chosen here were price, accommodates, bedrooms, beds, bathrooms, minimum_nights, maximum_nights, number_of_reviews, review_scores_rating, review_scores_accuracy, review_scores_cleanliness, review_scores_checkin, review_scores_communication, review_scores_location, review_scores_value, years, host_response_rate, host_acceptance_rate to align with what the team has chosen previously. The predictors chosen were only numeric since KNN will rely on distance matrix for the modeling.
+
+```{r}
+knn_var <- data_new %>%
+  select(price, accommodates, bedrooms, beds, bathrooms, minimum_nights,
+         maximum_nights, number_of_reviews, review_scores_rating, review_scores_accuracy,
+         review_scores_cleanliness, review_scores_checkin, review_scores_communication,
+         review_scores_location, review_scores_value, years,
+         host_response_rate, host_acceptance_rate, Kitchen, id)
+```
+
+3. Partitioning Dataset into Training and Validation set
+
+```{r}
+# Setting seed for reproducibility
+set.seed(250)
+
+# Random sampling the dataset index without replacement with 60% for training set
+train_index_knn <- sample(c(1:nrow(knn_var)), nrow(knn_var)*0.6) 
+
+# Partition the dataset into training and validation set based on the index sampling
+train_df_knn <- knn_var[train_index_knn, ]
+valid_df_knn <- knn_var[-train_index_knn, ]
+```
+
+4. Normalizing the Dataset
+
+Normalization was done due to the different scale for each predictor variable
+
+```{r}
+# Initializing normalized training, validation data, complete dataframe to originals
+train_norm_df_knn <- train_df_knn
+valid_norm_df_knn <- valid_df_knn
+knn_var_norm<- knn_var
+
+# Using preProcess () from the caret package to normalize predictor variables
+norm_values_knn <- preProcess(train_df_knn[,1:18], method=c("center", "scale"))
+train_norm_df_knn[,1:18] <- predict(norm_values_knn, train_df_knn[,1:18])
+valid_norm_df_knn[,1:18] <- predict(norm_values_knn, valid_df_knn[,1:18])
+knn_var_norm[,1:18] <- predict(norm_values_knn, knn_var[,1:18])
+
+# Normalizing rental dataframe
+rental_norm <- predict(norm_values_knn, rental)
+```
+
+5. Building KNN Predictive Model with arbitrary k=7
+
+```{r}
+# Creating knn model to predict whether rental has kitchen amenities
+rental_nn <- knn(train=train_norm_df_knn[,1:18], test=rental_norm, cl=train_norm_df_knn$Kitchen, k=7)
+
+# Checking the summary of the knn model prediction, including the 7 nearest neighbors index and distance
+attributes(rental_nn)
+```
+
+6. Determining optimal value for k
+
+```{r, warning=FALSE}
+# Initialize a data frame with two columns: k, and accuracy
+accuracy_df_knn <- data.frame(k=seq(1,14,1), accuracy=rep(0,14))
+
+# Compute knn for different k on validation
+for(i in 1:14){
+  knn.pred <- knn(train_norm_df_knn[,1:18], valid_norm_df_knn[,1:18], 
+                  cl = train_norm_df_knn$Kitchen, k=i)
+  accuracy_df_knn[i,2] <- confusionMatrix(knn.pred, valid_norm_df_knn$Kitchen)$overall[1] %>% round(3)
+}
+accuracy_df_knn
+```
+
+7. Building KNN Predictive Model with optimum k=4
+
+Optimum k=4 were chosen based on the highest accuracy when the model was tested againts the validation set.
+
+```{r}
+# Creating knn model to predict whether rental has kitchen amenities
+rental_nn <- knn(train=train_norm_df_knn[,1:18], test=rental_norm, cl=train_norm_df_knn$Kitchen, k=4)
+
+# Checking the summary of the knn model prediction, including the 7 nearest neighbors index and distance
+attributes(rental_nn)
+```
+8. Checking with actual data
+
+```{r}
+data_new[3,24]
+```
+
+Summary
+
+To predict whether certain rental properties in the Monserrat neighborhood had kitchen amenities or not, a KNN predictive model was constructed through a series of steps. Firstly, the third observation of a rental property in Monserrat was selected, and its amenities information was removed to create a test observation. Next, a new numeric dataframe was built for KNN model building using a range of predictors such as price, accommodates, bedrooms, beds, bathrooms, minimum_nights, maximum_nights, number_of_reviews, review_scores_rating, review_scores_accuracy, review_scores_cleanliness, review_scores_checkin, review_scores_communication, review_scores_location, review_scores_value, years, host_response_rate, and host_acceptance_rate. Only numeric predictors were chosen as KNN relies on a distance matrix for modeling.
+
+Furthermore, the dataset was partitioned into training and validation sets, and normalization was done to account for the different scale of each predictor variable. Following this, a KNN predictive model was built with an arbitrary k value of 7. These steps laid the foundation for creating a model that could predict which rental properties in the Monserrat neighborhood would have kitchen amenities.
+
+To refine the model, an optimal value for k was determined. This was done by testing the model against the validation set, and the highest accuracy was used to select the optimal value for k, which was found to be k=4. Finally, a KNN predictive model was built using k=4, which was then used to predict whether rental properties in the Monserrat neighborhood would have kitchen amenities or not. By using a range of predictors and an optimal k value, the KNN predictive model was able to provide accurate predictions on whether the third observation might have Kitchen amenities or not.
+
+### Classification Part II: Naive Bayes
+
+The Naive Bayes modeling was done through the following steps
+
+1. Create a new dataset with variable of focus for Naive Bayes modeling
+
+```{r}
+# Importing data
+merged2 <- data_new
+
+# Create a vector of column names to keep 
+keep_vars <- c("property_type", "room_type", "accommodates", "bedrooms", "beds", "price", "minimum_nights", "maximum_nights", "number_of_reviews", "instant_bookable", "bathrooms", "shared_bathroom", "Kitchen", "Wifi", "Air_conditioning", "Elevator", "Dishes_and_silverware", "Washer", "Body_soap", "Microwave", "Paid_parking_off_premises", "host_response_rate", "host_identity_verified", "short_term_availability", "long_term_availability","review_scores_rating")
+
+# Subset the merged2 dataframe to keep only the selected columns
+merged2 <- subset(merged2, select = keep_vars)
+```
+
+2. Binning the numerical variables into categorical variables of equal frequency using cut function
+
+```{r}
+# Binning 'accommodates'
+quantiles <- quantile(merged2$accommodates, probs = c(0.5))
+breaks <- c(0, quantiles, Inf)
+labels <- c("Small", "Large")
+merged2$accommodates <- cut(merged2$accommodates, breaks = breaks, labels = labels)
+table(merged2$accommodates)
+
+# Binning 'bedrooms'
+merged2$bedrooms <- cut(merged2$bedrooms, breaks = c(0, 1, 2, Inf), labels = c("1-2", "3-4", "5+"))
+
+# Binning 'beds'
+merged2$beds <- cut(merged2$beds, breaks = c(0, 1, 2, Inf), labels = c("1-2", "3-4", "5+"))
+
+# Binning 'bathrooms'
+merged2$bathrooms <- cut(merged2$bathrooms, breaks = c(0, 1, 2, 3, Inf), labels = c("1", "2", "3", "4+"))
+
+# Binning 'minimum_nights'
+merged2$minimum_nights <- cut(merged2$minimum_nights + runif(nrow(merged2), -0.0001, 0.0001), 
+                              breaks = quantile(merged2$minimum_nights + runif(nrow(merged2), -0.0001, 0.0001), probs = seq(0, 1, 0.25)), 
+                              labels = c("1", "2", "3", "4+"))
+
+# Add small amount of noise to 'maximum_nights'
+merged2$maximum_nights <- merged2$maximum_nights + runif(nrow(merged2), -0.0001, 0.0001)
+# Binning 'maximum_nights'
+merged2$maximum_nights <- cut(merged2$maximum_nights, breaks = quantile(merged2$maximum_nights, probs = seq(0, 1, 0.25)), labels = c("1-3", "4-7", "8-14", "15+"))
+# Binning 'number_of_reviews'
+merged2$number_of_reviews <- cut(merged2$number_of_reviews, breaks = quantile(merged2$number_of_reviews, probs = seq(0, 1, 0.25)), labels = c("1-7", "8-23", "24-56", "57+"))
+# Binning 'host_response_rate'
+merged2$host_response_rate <- cut(jitter(merged2$host_response_rate), 
+                                  breaks = quantile(jitter(merged2$host_response_rate), 
+                                                    probs = seq(0, 1, 0.25), 
+                                                    na.rm = TRUE), 
+                                  labels = c("<75%", "75-94%", "95-99%", "100%"))
+# Binning 'review_scores_rating'
+# Add jitter to the data
+merged2$review_scores_rating<- jitter(merged2$review_scores_rating, amount = 0.001)
+quantiles <- quantile(merged2$review_scores_rating, probs = seq(0, 1, 0.25), na.rm = TRUE)
+
+if (length(unique(quantiles)) == length(quantiles)) {
+  # Bin the data
+  merged2$review_scores_rating <- cut(merged2$review_scores_rating,
+                                      breaks = quantiles,
+                                      labels = c("<80", "80-90", "90-95", "95+"),
+                                      include.lowest = TRUE)
+} else {
+  cat("Quantiles are not unique. Please consider using different probabilities or jitter amount.")
+}
+
+# Binning 'Price'
+# Calculate the quantiles for equal frequency binning
+quantiles <- quantile(merged2$price, probs = seq(0, 1, length.out = 3 + 1), na.rm = TRUE, type = 5)
+# Generate labels for the bins
+bin_labels <- c("Low", "Medium", "High")
+# Bin the data
+merged2$price <- cut(merged2$price, breaks = quantiles, labels = bin_labels, include.lowest = TRUE)
+```
+
+3. Creating Proportional Barplot for Feature Selection to be loaded into Naive Bayes Model
+
+```{r}
+# Select the categorical variables
+variables <- c("property_type", "room_type", "accommodates", "bedrooms", "beds", "price", "minimum_nights", "maximum_nights", "number_of_reviews", "bathrooms", "shared_bathroom", "Kitchen", "Wifi", "Air_conditioning", "Elevator", "Dishes_and_silverware", "Washer", "Body_soap", "Microwave", "Paid_parking_off_premises", "host_response_rate", "host_identity_verified", "short_term_availability", "long_term_availability", "review_scores_rating")
+
+# Reshape the dataset
+merged2_long <- merged2 %>%
+  select(one_of(variables), instant_bookable) %>%
+  gather(key = "variable", value = "value", -instant_bookable)
+
+# Create the faceted barplot
+p <- ggplot(merged2_long, aes(x = value, fill = instant_bookable)) +
+  geom_bar(position = "dodge") +
+  theme_minimal() +
+  facet_wrap(~variable, scales = "free_x", ncol = 5) +
+  xlab("Value") +
+  ylab("Count") +
+  scale_fill_discrete(name = "Instant Bookable")
+
+print(p)
+```
+
+based on the barplot it appears that the longterm availability, short term availability, air_conditioning,beds, number_of_reviews, price, minimum nights, review_score_rating variable may not have a strong amount of predictive power in a naive Bayes model as the distribution is relatively similar. so we gonna remove it
+
+4. Removing Variable with Weak Predictive Power
+
+```{r}
+# List of variables to remove
+variables_to_remove <- c("long_term_availability", "short_term_availability", "Air_conditioning", "number_of_reviews", "price", "minimum_nights", "review_scores_rating")
+
+# Remove the variables
+merged2 <- merged2 %>%
+  select(-one_of(variables_to_remove))
+```
+
+5. Building the Naive Bayes Prediction Model
+
+```{r, warning=FALSE}
+# Set the seed for reproducibility
+set.seed(42)
+
+# Create an 60-40 split for training and testing sets
+train_index <- createDataPartition(merged2$instant_bookable, p = 0.6, list = FALSE)
+train_set <- merged2[train_index, ]
+test_set <- merged2[-train_index, ]
+
+# Build the Naive Bayes model using naiveBayes() function
+nb_model <- naiveBayes(instant_bookable ~ ., data = train_set)
+
+# Summary of the model
+print(nb_model)
+
+# Generate predictions for the test set
+predictions <- predict(nb_model, test_set)
+
+# Convert predictions and test_set$instant_bookable to factors
+predictions_factor <- factor(predictions, levels = c("FALSE", "TRUE"))
+test_set_factor <- factor(test_set$instant_bookable, levels = c("FALSE", "TRUE"))
+
+# Create the confusion matrix
+cm <- confusionMatrix(predictions_factor, test_set_factor)
+
+# Print the confusion matrix
+print(cm)
+```
+
+6. Prediction Fictional Apartment
+
+```{r, warning=FALSE}
+#b.
+# Create a data frame for the fictional apartment
+# Create a data frame for the fictional apartment
+kalibataCity <- data.frame(
+  property_type = "Entire rental unit",
+  room_type = "Entire home/apt",
+  accommodates = "Small",
+  bedrooms = "1-2",
+  beds = "1-2",
+  maximum_nights = "4-7",
+  bathrooms = "1",
+  shared_bathroom = "No",
+  Kitchen = "1",
+  Wifi = "1",
+  Elevator = "0",
+  Dishes_and_silverware = "1",
+  Washer = "0",
+  Body_soap = "1",
+  Microwave = "1",
+  Paid_parking_off_premises = "1",
+  host_response_rate = "95-99%",
+  host_identity_verified = "TRUE"
+)
+
+# Make the prediction
+prediction <- predict(nb_model, kalibataCity)
+
+# Print the prediction result
+print(prediction)
+```
+Summary
+
+To build a predictive model, the first step involved data preprocessing and cleaning, where we transformed certain variables into numeric variables and binned numerical variables using equal frequency. Additionally, we converted several variables into factor data types to make them suitable for input in the Naive Bayes model. We also removed some index variables, including names, as they would not be meaningful in the model. Once the data was prepared, we proceeded to the feature selection stage, where we created bar plots for all the remaining variables to evaluate their distribution. If the distribution of a variable was relatively similar, we considered it to have low predictive power and removed it from the model.
+
+After feature selection, we partitioned our data into 60% for training and 40% for testing. The Naive Bayes model was then trained using the training data, and its performance was evaluated on the test data. The model achieved an accuracy of 0.6327, which provides a reasonable estimate of how well the model will perform on new instances. In addition to the data partitioning and model evaluation, we created a fictional apartment named "Kalibata City" to test the model's performance in a practical scenario. This apartment had specific attributes such as property type, room type, accommodations, number of bedrooms and beds, maximum nights, bathroom availability, shared bathroom status, and various amenities. We input the details of this fictional apartment into our trained Naive Bayes model to predict whether it would be instant bookable (TRUE) or not (FALSE).
+
+The model returned a prediction of "FALSE," indicating that, based on the given features, this specific apartment may not qualify as an instant bookable property.
+
+### Classification Part III: Classification Tree
+
+Classification Tree predictive model was built through the following steps:
+
+1. Preparing the data for Classification Tree Model
+
+```{r}
+# binning rating into three
+merged <- data_new %>%
+  mutate(rating_bin = ntile(review_scores_rating, 3))
+merged$rating_bin <- factor(merged$rating_bin, labels = c("low","medium","high"))
+table(merged$rating_bin)
+
+# remove ID, name, latitude, longitude, host_id, because index is irrelevant. Prepare other variable for the tree model input
+merged <- select(merged, -c(id, name, latitude, longitude, host_id,review_scores_rating))
+merged$host_acceptance_rate[merged$host_acceptance_rate == "N/A"] <- 0
+merged$host_acceptance_rate <- as.numeric(gsub("%", "", merged$host_acceptance_rate))
+merged$host_response_rate[merged$host_response_rate == "N/A"] <- 0
+merged$host_response_rate <- as.numeric(gsub("%", "", merged$host_response_rate))
+
+# binning property type because the it contain so many variable. It will be bin into Entire Home, Private Room and Other
+merged <- merged %>%
+  mutate(property_type_bin = case_when(
+    property_type %in% c("Entire home", "Entire apartment", "Entire condo", "Entire serviced apartment", "Entire villa", "Entire townhouse") ~ "Entire Home",
+    property_type %in% c("Private room in rental unit", "Private room in condo", "Private room in home", "Private room in serviced apartment", "Private room in villa", "Private room in townhouse") ~ "Private Room",
+    TRUE ~ "Other"
+  ))
+merged <- select(merged, -property_type)
+
+# remove all review scores column because it redundant with review scores rating
+merged <- subset(merged, select = -c(review_scores_accuracy, review_scores_cleanliness, review_scores_checkin, review_scores_location, review_scores_value,review_scores_communication))
+
+```
+
+2. Building the Classification Tree
+
+```{r}
+# Split the data into training and testing sets
+set.seed(123)
+train_idx <- sample(nrow(merged), 0.6*nrow(merged))
+train_data <- merged[train_idx, ]
+test_data <- merged[-train_idx, ]
+
+# Define the control parameters for tree building
+ctrl <- rpart.control(minsplit = 20, xval = 10)
+
+# Build the tree with cross-validation
+tree_fit <- rpart(rating_bin ~ ., data = train_data, method = "class", control = ctrl)
+printcp(tree_fit)
+
+# Determine the optimal CP value
+optimal_cp <- tree_fit$cptable[which.min(tree_fit$cptable[,"xerror"]),"CP"]
+optimal_cp
+# Prune the tree with the optimal CP value
+pruned_tree_fit <- prune(tree_fit, cp = optimal_cp)
+
+
+##C.
+# Plot the pruned tree
+rpart.plot(pruned_tree_fit, box.palette = "Greens")
+
+# Predict on test data and build confusion matrix
+test_pred <- predict(pruned_tree_fit, test_data, type = "class")
+confusionMatrix(test_data$rating_bin, test_pred)
+
+table(test_data$rating_bin, test_pred)
+
+# Create confusion matrix
+conf_mat <- confusionMatrix(test_data$rating_bin, test_pred)
+
+# Print the accuracy
+conf_mat
+```
+
+Summary
+
+In developing a classification tree model to predict Airbnb listing ratings, various features were evaluated for their potential influence on the ratings. The dataset contained attributes such as host acceptance rate, host response rate, and property types, among others. These features were considered relevant since they could impact guests' experiences and subsequently affect their ratings. To facilitate model building, cleaning and preprocessing steps were carried out, including converting percentages to numeric values, remove indexing variables and categorizing property types into broader groups.
+
+During the exploration of different models, an interesting observation was the trade-off between the number of bins and model accuracy. It was noticed that increasing the number of bins could lead to reduced accuracy due to overfitting and data imbalance. To address this issue, the ratings were divided into three bins: low, medium, and high with equal frequency. This distribution may have impacted the model's performance, as a slight imbalance in the data can affect the model's ability to generalize to unseen data.
+
+The final model was determined through a systematic process involving data splitting, tree building with cross-validation, and pruning based on the optimal CP value. The optimal CP value was found to be 0.02252252, which guided the pruning process to achieve a balance between tree complexity and classification error. The model's performance was evaluated using a confusion matrix, and the overall accuracy was found to be 0.6106, indicating a reasonable performance for a classification problem with three categories.
+
+## Step IV: Clustering
+
+0. Process for Variable Selection & Model Building
+
+First, k-means clustering is chosen as the clustering model between hierarchical clustering and k-means clustering due to computational efficiency of k-means clustering in calculating 563 observations of 41 variables.
+
+Second, as k-means clustering is chosen, only numeric values are passed onto the model and categorical data such as name, latitude & longitude, and host_response_time, are dropped. For any values that could turn into numeric values, such as host_acceptance_rate and host_response_rate, were converted into numeric values after data manipulation.
+
+Third, an elbow chart is created to see the general trend of total within-cluster sum of squares per the number of clusters. Because there was not a clear kink in the chart, a manual observation of data for centers for different k's is conducted. According to the analysis, any number of clusters with k equal and above 4 does not provide discernible
+information for interpretation. Hence, k=3 was chosen as the number of models.
+
+1. Preparing data for clustering analysis
+
+```{r}
+cluster <- as.data.frame(data_new)
+row.names(cluster) <- cluster[,1]
+cluster <- cluster[,-1]
+
+#Select numeric variables only
+num_var <- cluster %>% select(price, accommodates, bedrooms, beds, bathrooms, minimum_nights, maximum_nights, number_of_reviews, review_scores_rating, review_scores_accuracy, review_scores_cleanliness, review_scores_checkin, review_scores_communication, review_scores_location, review_scores_value, years, host_response_rate, host_acceptance_rate)
+
+#Change from string type to numeric type
+num_var$host_response_rate <- gsub("%", "", num_var$host_response_rate)
+num_var$host_acceptance_rate <- gsub("%", "", num_var$host_acceptance_rate)
+num_var <- num_var %>% 
+  mutate(host_response_rate = as.numeric(gsub("%", "",host_response_rate)), host_acceptance_rate = as.numeric(gsub("%", "", host_acceptance_rate)))
+
+#Normalize the data
+num_var.norm <- sapply(num_var, scale)
+row.names(num_var.norm) <- row.names(num_var)
+```
+
+2. Building Elbow Plot for Initial Analysis on Number of Cluster
+
+```{r}
+#Create an elbow chart 
+set.seed(699)
+kmax <- 30
+wss <- sapply(1:kmax, 
+              function(k){kmeans(num_var.norm, k, nstart=50, iter.max = 30)$tot.withinss})
+wss
+plot(1:kmax, wss, type = "b", pch = 20, frame = FALSE, xlab = "Number of Clusters K", ylab = "Total Within-Clusters Sum of Squares")
+```
+
+By looking at the elbow plot, it is safe to start iterating from k=3 to k=7, but after iterating it in separate script we found that k equals to 3 could splits the data best and provide easy to understand output. Therefore we chose k=3 for this cluster model.
+
+3. Building k-means clustering model
+
+```{r}
+#Kmeans clustering with k=3
+km3 <- kmeans(num_var.norm, 3, nstart=50)
+km3$centers
+cluster3 <- km3$cluster
+
+# Checking the cluster distance
+dist(km3$centers)
+
+# Binding the cluster label back to original data
+num_var.norm <- cbind(num_var.norm, cluster)
+cluster <- cbind(cluster, cluster3)
+head(cluster)
+```
+
+4. Naming the cluster
+
+- Cluster1: Well-reviewed & Steady 
+
+The number of reviews and review scores across the board are generally highest among three clusters, indicating the number of reviews prove the quality of listening per
+described. 
+
+- Cluster2: Big Vacay 
+
+The price, number of accommodates, bedrooms, beds, and bathrooms are highest. It indicates that the listings in Cluster2 may involve the full house designed for a group of friends or a family trip. 
+
+- Cluster3: Cheap & Shady 
+
+The price of cluster 3 is placed the lowest and the number of reviews and review scores
+across the board are the worst.
+
+5. Visualizing the Cluster: Line Plot
+
+```{r}
+dev.new(width = 12, height = 50)
+
+# Plot the data with x-axis labels
+plot(c(0), xaxt = 'n', ylab = "", type = "l", xlab = "", main = "Profile Plot of Centroids",
+     ylim = c(min(km3$centers), max(km3$centers)), xlim = c(0,18))
+
+axis(1, at = c(1:18), labels = names(num_var), las = 2, cex.axis = 0.6)
+
+lines(km3$centers[1,], lty = 1, lwd = 2, col = "red")
+lines(km3$centers[2,], lty = 2, lwd = 2, col = "blue")
+lines(km3$centers[3,], lty = 3, lwd = 2, col = "green")
+
+clusters = c("Well-Reviewed & Steady", "Big Vacay", "Cheap & Shady")
+text(x = rep(0.5, 2)+1.8, y = c(km3$centers[1,1]+0.5, km3$centers[2,1], km3$centers[3,1]-0.3), 
+     labels = clusters)
+mtext("Index", side = 1, line = 10, cex = 0.8)
+```
+
+Description:
+
+The line plot above describes the cluster centroids across each variable. In alignment with the previous analysis, Cluster "Big Vacay" has a distinguishable price, number of accommodates, bedrooms, beds, and bathrooms, Cluster "Cheap & Shady" has the lowest review numbers and scores across the board, and Cluster "Well-Reviewed & Steady" averages around zero, showing its consistent performance and position. 
+
+6. Visualizing Cluster: Scatter Plot
+
+```{r}
+dev.new(width = 15, height = 50)
+cluster$cluster_label <- ifelse(cluster$cluster3 == 1, clusters[1],
+                                  ifelse(cluster$cluster3 == 2, clusters[2], clusters[3]))
+
+cluster$cluster_label <- cluster$cluster_label %>% as.factor()
+
+discretionary <- cluster %>% group_by(cluster_label) %>%
+  summarize(mean_price = mean(price), 
+            mean_review_scores_rating = mean(review_scores_rating))
+
+ggplot(data = discretionary, aes(x = mean_price, y = mean_review_scores_rating, color = factor(cluster_label))) + 
+  geom_point(size = 4) +
+  scale_color_manual(values = c("purple", "orange", "green")) +
+  theme_classic() +
+  labs(x = "Average Price", y = "Average Review Scores Rating", color = "Clusters", title = "Comparison between Average Price and Average Review Scores Rating") +
+  geom_text(aes(label = cluster_label),
+            hjust = 0.1, vjust = 2, size = 3) +
+  scale_y_continuous(limits = c(0, max(discretionary$mean_review_scores_rating) + 1))
+```
+
+Description:
+
+The scatter plot above portrays the relationship between average price and average review score rating of each cluster. It is very clear that average price and average review scores ratings have neither a positive or negative relationship, as the average prices for Cheap & Shady and Well-Reviewed & Steady are very closely positioned for contrasting average review scores rating. Plus, while Big Vacay has a much higher average price point, it does not show a positive correlation to average review scores rating. 
+
+7. Visualizing Cluster: Countplot
+
+```{r}
+ggplot(cluster, aes(x = room_type, fill = cluster_label)) + geom_bar(position = "dodge") +
+  labs(x = "Room Type", y = "Count", fill = "Cluster", title = "Countplot of Cluster Per Room Type") +theme(plot.title = element_text(hjust = 0.5))
+```
+
+Description
+
+The count plot above illustrates the number of values in each cluster per room type. As shown, the values of Cluster "Well-Reviewed & Steady" predominantly occupy entire home/apartment type and Cluster "Big Vacay" does not exist in the room type of hotel room and shared room. 
+
+## Step V: Conclusions
+
+The data mining analysis output is a valuable asset for both property owners and prospective tenants in Monserrat. It provides both groups with data-driven insights to make informed decisions about renting and owning property.
+
+For property owners, the data mining analysis output can help improve the service they offer by identifying the features that prospective tenants value the most. By analyzing historical data, the analysis can identify the most sought-after features in a rental property such as location, amenities, and condition. Property owners can use this information to improve their rental offerings and attract more tenants. Additionally, the analysis can provide insights into rental prices and help property owners set prices that match the market and prospective tenants' expectations.
+
+For prospective tenants, the data mining analysis output can help them easily choose rental properties that match their needs. The clustering model can help tenants identify properties that meet their specific requirements based on location, size, amenities, and other factors. This can save tenants time and effort by narrowing down the available options and selecting only the most suitable properties. Additionally, the analysis can help tenants negotiate better prices by providing insights into the market value of specific rental properties. Finally, by analyzing the features of rental properties, prospective tenants can predict the level of service they can expect from their landlords and make informed decisions about which properties to rent.
+
+In conclusion, the data mining analysis output is an invaluable asset for both property owners and prospective tenants in Montserrat. By providing insights into rental prices, rental features, and service levels, the analysis can help both parties achieve their goals and make data-driven decisions. Ultimately, this can lead to a more efficient and effective rental market that benefits everyone involved.
