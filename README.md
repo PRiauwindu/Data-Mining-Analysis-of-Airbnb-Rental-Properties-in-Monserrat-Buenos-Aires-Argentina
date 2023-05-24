@@ -20,6 +20,8 @@ Explore this repository to access the analysis code, datasets, and detailed docu
 
 If you find this repository useful, you may replicate the code here to assist your projects/works but dont forget to properly cite this repository in your work.
 
+Note that this repository uses dataset called buenos.csv from the BU MET AD699 Data Mining course. The dataset itself was scraped from Airbnb website for Buenos Aires Argentina.
+
 Thank you!
 
 Putranegara Riauwindu
